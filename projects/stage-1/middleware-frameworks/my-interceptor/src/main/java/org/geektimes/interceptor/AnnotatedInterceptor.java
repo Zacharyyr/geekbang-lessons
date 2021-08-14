@@ -19,8 +19,8 @@ package org.geektimes.interceptor;
 import org.geektimes.commons.lang.Prioritized;
 import org.geektimes.commons.reflect.util.TypeUtils;
 
+import javax.annotation.Priority;
 import javax.interceptor.AroundInvoke;
-import javax.interceptor.Interceptor;
 import javax.interceptor.InterceptorBinding;
 import javax.interceptor.InvocationContext;
 import java.lang.annotation.Annotation;
@@ -31,6 +31,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static java.lang.String.format;
 import static java.util.ServiceLoader.load;
@@ -38,13 +40,17 @@ import static org.geektimes.commons.function.Streams.stream;
 import static org.geektimes.commons.util.AnnotationUtils.findAnnotation;
 
 /**
- * The abstract annotated {@link Interceptor @Interceptor} class
+ * The abstract annotated {@link javax.interceptor.Interceptor @Interceptor} class
  *
  * @param <A> the type of {@link Annotation}
  * @author <a href="mailto:mercyblitz@gmail.com">Mercy</a>
  * @since 1.0.0
  */
-public abstract class AnnotatedInterceptor<A extends Annotation> implements Prioritized {
+public abstract class AnnotatedInterceptor<A extends Annotation> implements Interceptor, Prioritized {
+
+    private static final Class<? extends Annotation> INTERCEPTOR_ANNOTATION_TYPE = javax.interceptor.Interceptor.class;
+
+    private final Logger logger = Logger.getLogger(getClass().getName());
 
     private final Class<A> bindingAnnotationType;
 
@@ -55,9 +61,9 @@ public abstract class AnnotatedInterceptor<A extends Annotation> implements Prio
      *                                  the generic parameter type does not be specified.
      */
     public AnnotatedInterceptor() throws IllegalArgumentException {
-        if (!getClass().isAnnotationPresent(Interceptor.class)) {
+        if (!getClass().isAnnotationPresent(INTERCEPTOR_ANNOTATION_TYPE)) {
             throw new IllegalArgumentException(
-                    format("The Interceptor class[%s] must annotate %s", getClass(), Interceptor.class));
+                    format("The Interceptor class[%s] must annotate %s", getClass(), INTERCEPTOR_ANNOTATION_TYPE));
         }
         this.bindingAnnotationType = resolveInterceptorBindingAnnotationType();
     }
@@ -103,13 +109,21 @@ public abstract class AnnotatedInterceptor<A extends Annotation> implements Prio
         List<Class<?>> typeArguments = TypeUtils.resolveTypeArguments(getClass());
         Class<A> annotationType = null;
         for (Class<?> typeArgument : typeArguments) {
-            if (typeArgument.isAnnotation() && typeArgument.isAnnotationPresent(InterceptorBinding.class)) {
+            if (typeArgument.isAnnotation()) {
                 annotationType = (Class<A>) typeArgument;
+                if (!annotationType.isAnnotationPresent(InterceptorBinding.class)) {
+                    if (logger.isLoggable(Level.SEVERE)) {
+                        logger.severe(format("The annotationType[%s] should annotate %s",
+                                typeArgument.getName(),
+                                InterceptorBinding.class.getName()));
+                    }
+                } else {
+                    annotationType = (Class<A>) typeArgument;
+                    assertInterceptorBindingAnnotationType(annotationType);
+                }
                 break;
             }
         }
-
-        assertInterceptorBindingAnnotationType(annotationType);
 
         return annotationType;
     }
@@ -148,6 +162,9 @@ public abstract class AnnotatedInterceptor<A extends Annotation> implements Prio
 
     protected Throwable getFailure(Throwable e) {
         Throwable failure = e instanceof InvocationTargetException ? e.getCause() : e;
+        while (failure instanceof InvocationTargetException) {
+            failure = getFailure(failure);
+        }
         return failure;
     }
 

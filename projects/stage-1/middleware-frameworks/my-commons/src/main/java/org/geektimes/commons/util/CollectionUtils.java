@@ -16,12 +16,9 @@
  */
 package org.geektimes.commons.util;
 
-import org.apache.commons.lang.StringUtils;
-
 import java.util.*;
 
-import static java.util.Collections.emptySet;
-import static java.util.Collections.unmodifiableSet;
+import static java.util.Collections.*;
 
 /**
  * Miscellaneous collection utility methods.
@@ -29,7 +26,7 @@ import static java.util.Collections.unmodifiableSet;
  *
  * @since 1.0.0
  */
-public class CollectionUtils {
+public abstract class CollectionUtils extends BaseUtils {
 
     /**
      * Return {@code true} if the supplied Collection is {@code null} or empty.
@@ -53,30 +50,69 @@ public class CollectionUtils {
         return !isEmpty(collection);
     }
 
+
+    public static <T> Set<T> ofSet(Collection<T> values, T... others) {
+        int size = size(values);
+
+        if (size < 1) {
+            return ofSet(others);
+        }
+
+        Set<T> elements = newFixedSet(size + others.length);
+        // add values
+        elements.addAll(values);
+
+        // add others
+        for (T other : others) {
+            elements.add(other);
+        }
+        return unmodifiableSet(elements);
+    }
+
     /**
      * Convert to multiple values to be {@link LinkedHashSet}
      *
-     * @param values one or more values
+     * @param values values
      * @param <T>    the type of <code>values</code>
      * @return read-only {@link Set}
      */
-    public static <T> Set<T> ofSet(T... values) {
-        int size = values == null ? 0 : values.length;
+    public static <T> Set<T> ofSet(T[] values) {
+        int size = ArrayUtils.length(values);
         if (size < 1) {
             return emptySet();
         }
 
-        float loadFactor = 1f / ((size + 1) * 1.0f);
-
-        if (loadFactor > 0.75f) {
-            loadFactor = 0.75f;
-        }
-
-        Set<T> elements = new LinkedHashSet<>(size, loadFactor);
+        Set<T> elements = newFixedSet(size);
         for (int i = 0; i < size; i++) {
             elements.add(values[i]);
         }
         return unmodifiableSet(elements);
+    }
+
+    /**
+     * Convert to multiple values to be {@link LinkedHashSet}
+     *
+     * @param one    one value
+     * @param others others values
+     * @param <T>    the type of <code>values</code>
+     * @return read-only {@link Set}
+     */
+    public static <T> Set<T> ofSet(T one, T... others) {
+        int size = others == null ? 0 : others.length;
+        if (size < 1) {
+            return singleton(one);
+        }
+
+        Set<T> elements = new LinkedHashSet<>(size + 1, Float.MIN_NORMAL);
+        elements.add(one);
+        for (int i = 0; i < size; i++) {
+            elements.add(others[i]);
+        }
+        return unmodifiableSet(elements);
+    }
+
+    public static <T> Set<T> newFixedSet(int size) {
+        return new LinkedHashSet<>(size, Float.MIN_NORMAL);
     }
 
     /**
@@ -166,5 +202,4 @@ public class CollectionUtils {
             return values.iterator().next();
         }
     }
-
 }

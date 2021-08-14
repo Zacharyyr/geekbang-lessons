@@ -18,7 +18,6 @@ package org.geektimes.interceptor.cglib;
 
 import net.sf.cglib.proxy.MethodInterceptor;
 import net.sf.cglib.proxy.MethodProxy;
-import org.geektimes.interceptor.CglibMethodInvocationContext;
 import org.geektimes.interceptor.ChainableInvocationContext;
 
 import javax.interceptor.InvocationContext;
@@ -30,7 +29,7 @@ import java.lang.reflect.Method;
  * @author <a href="mailto:mercyblitz@gmail.com">Mercy</a>
  * @since 1.0.0
  */
-public class MethodInterceptorAdapter implements MethodInterceptor {
+class MethodInterceptorAdapter implements MethodInterceptor {
 
     private final Object target;
 

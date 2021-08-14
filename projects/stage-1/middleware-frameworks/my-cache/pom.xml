@@ -21,9 +21,16 @@
 
     <dependencies>
 
+        <!-- Internal Artifacts -->
         <dependency>
             <groupId>org.geekbang.projects</groupId>
             <artifactId>my-commons</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.geekbang.projects</groupId>
+            <artifactId>my-interceptor</artifactId>
             <version>${revision}</version>
         </dependency>
 
@@ -46,6 +53,12 @@
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
+        </dependency>
+
+        <!-- Spring Framework Integration -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
         </dependency>
 
         <!-- Testing -->
