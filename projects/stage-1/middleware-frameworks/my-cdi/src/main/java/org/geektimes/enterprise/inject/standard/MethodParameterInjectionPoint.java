@@ -16,8 +16,10 @@
  */
 package org.geektimes.enterprise.inject.standard;
 
-import javax.enterprise.inject.spi.*;
-import java.lang.reflect.Constructor;
+import javax.enterprise.inject.spi.AnnotatedMethod;
+import javax.enterprise.inject.spi.AnnotatedParameter;
+import javax.enterprise.inject.spi.Bean;
+import javax.enterprise.inject.spi.InjectionPoint;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 
@@ -28,6 +30,15 @@ import java.lang.reflect.Parameter;
  * @since 1.0.0
  */
 public class MethodParameterInjectionPoint extends AbstractInjectionPoint<AnnotatedParameter, AnnotatedMethod, Method> {
+
+    public MethodParameterInjectionPoint(AnnotatedParameter annotatedParameter) {
+        this(annotatedParameter, (AnnotatedMethod) annotatedParameter.getDeclaringCallable());
+    }
+
+    public MethodParameterInjectionPoint(AnnotatedParameter annotatedParameter,
+                                         AnnotatedMethod annotatedMethod) {
+        this(annotatedParameter, annotatedMethod, null);
+    }
 
     public MethodParameterInjectionPoint(AnnotatedParameter annotatedParameter,
                                          AnnotatedMethod annotatedMethod, Bean<?> bean) {

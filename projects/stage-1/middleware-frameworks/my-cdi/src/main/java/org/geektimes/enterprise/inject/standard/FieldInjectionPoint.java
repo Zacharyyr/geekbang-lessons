@@ -29,6 +29,10 @@ import java.lang.reflect.Field;
  */
 public class FieldInjectionPoint extends AbstractInjectionPoint<AnnotatedField, AnnotatedField, Field> {
 
+    public FieldInjectionPoint(AnnotatedField annotatedField) {
+        this(annotatedField, null);
+    }
+
     public FieldInjectionPoint(AnnotatedField annotatedField, Bean<?> bean) {
         super(annotatedField, annotatedField, bean);
     }

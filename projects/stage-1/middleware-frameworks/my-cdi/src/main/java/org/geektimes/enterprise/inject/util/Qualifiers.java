@@ -21,14 +21,11 @@ import javax.enterprise.inject.Default;
 import javax.inject.Qualifier;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static org.geektimes.commons.util.AnnotationUtils.*;
-import static org.geektimes.commons.util.CollectionUtils.ofSet;
+import static org.geektimes.commons.collection.util.CollectionUtils.ofSet;
+import static org.geektimes.commons.lang.util.AnnotationUtils.*;
 
 /**
  * The utilities class for {@link Qualifier}
@@ -45,7 +42,7 @@ public abstract class Qualifiers {
     }
 
     public static boolean isQualifier(Class<? extends Annotation> annotationType) {
-        return annotationType.isAnnotation() && isAnnotated(annotationType, Qualifier.class);
+        return annotationType.isAnnotation() && isAnnotationPresent(annotationType, Qualifier.class);
     }
 
     public static Set<Annotation> getQualifiers(AnnotatedElement annotatedElement) {
@@ -56,7 +53,7 @@ public abstract class Qualifiers {
     }
 
     public static Set<Annotation> getQualifiers(Collection<Annotation> annotations) {
-        Set<Annotation> qualifiers = filterAnnotations(annotations, Qualifiers::isQualifier);
+        Set<Annotation> qualifiers = filterAnnotations(new LinkedHashSet<>(annotations), Qualifiers::isQualifier);
         return ofSet(qualifiers, Any.Literal.INSTANCE, Default.Literal.INSTANCE);
     }
 

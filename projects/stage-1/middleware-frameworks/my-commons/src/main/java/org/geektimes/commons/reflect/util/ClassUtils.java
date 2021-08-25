@@ -16,19 +16,43 @@
  */
 package org.geektimes.commons.reflect.util;
 
+import org.apache.commons.io.filefilter.SuffixFileFilter;
+import org.geektimes.commons.collection.util.CollectionUtils;
+import org.geektimes.commons.constants.Constants;
+import org.geektimes.commons.constants.FileSuffixConstants;
+import org.geektimes.commons.constants.PathConstants;
+import org.geektimes.commons.filter.ClassFileJarEntryFilter;
+import org.geektimes.commons.io.util.FileUtils;
+import org.geektimes.commons.io.util.SimpleFileScanner;
+import org.geektimes.commons.jar.SimpleJarEntryScanner;
+import org.geektimes.commons.lang.util.ClassPathUtils;
+import org.geektimes.commons.lang.util.StringUtils;
+
+import java.io.File;
 import java.lang.reflect.Array;
-import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
 import java.util.*;
 import java.util.function.Predicate;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
+import static java.lang.reflect.Modifier.isAbstract;
+import static java.lang.reflect.Modifier.isInterface;
+import static java.util.Arrays.asList;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
-import static org.apache.commons.lang.ArrayUtils.isNotEmpty;
+import static org.geektimes.commons.collection.util.CollectionUtils.newLinkedHashSet;
+import static org.geektimes.commons.collection.util.CollectionUtils.ofSet;
 import static org.geektimes.commons.function.Streams.filterAll;
 import static org.geektimes.commons.function.ThrowableFunction.execute;
-import static org.geektimes.commons.util.CollectionUtils.ofSet;
+import static org.geektimes.commons.lang.util.ArrayUtils.isEmpty;
+import static org.geektimes.commons.lang.util.ArrayUtils.isNotEmpty;
+import static org.geektimes.commons.lang.util.ClassLoaderUtils.getClassLoader;
 
 /**
  * {@link Class} Utilities class
@@ -59,6 +83,7 @@ public abstract class ClassUtils {
      */
     private static final int SYNTHETIC = 0x00001000;
 
+    public static final Class[] EMPTY_CLASS_ARRAY = new Class[0];
 
     /**
      * Simple Types including:
@@ -115,6 +140,12 @@ public abstract class ClassUtils {
 
     static final Map<Class<?>, Boolean> concreteClassCache = new WeakHashMap<>();
 
+    private static final Map<String, Set<String>> classPathToClassNamesMap = initClassPathToClassNamesMap();
+
+    private static final Map<String, String> classNameToClassPathsMap = initClassNameToClassPathsMap();
+
+    private static final Map<String, Set<String>> packageNameToClassNamesMap = initPackageNameToClassNamesMap();
+
     static {
         PRIMITIVE_WRAPPER_TYPE_MAP.put(Boolean.class, boolean.class);
         PRIMITIVE_WRAPPER_TYPE_MAP.put(Byte.class, byte.class);
@@ -127,15 +158,56 @@ public abstract class ClassUtils {
 
         Set<Class<?>> primitiveTypeNames = new HashSet<>(32);
         primitiveTypeNames.addAll(PRIMITIVE_WRAPPER_TYPE_MAP.values());
-        primitiveTypeNames.addAll(Arrays
-                .asList(boolean[].class, byte[].class, char[].class, double[].class,
-                        float[].class, int[].class, long[].class, short[].class));
+        primitiveTypeNames.addAll(asList(boolean[].class, byte[].class, char[].class, double[].class,
+                float[].class, int[].class, long[].class, short[].class));
         for (Class<?> primitiveTypeName : primitiveTypeNames) {
             PRIMITIVE_TYPE_NAME_MAP.put(primitiveTypeName.getName(), primitiveTypeName);
         }
     }
 
     private ClassUtils() {
+    }
+
+    private static Map<String, Set<String>> initClassPathToClassNamesMap() {
+        Map<String, Set<String>> classPathToClassNamesMap = new LinkedHashMap<>();
+        Set<String> classPaths = new LinkedHashSet<>();
+        classPaths.addAll(ClassPathUtils.getBootstrapClassPaths());
+        classPaths.addAll(ClassPathUtils.getClassPaths());
+        for (String classPath : classPaths) {
+            Set<String> classNames = findClassNamesInClassPath(classPath, true);
+            classPathToClassNamesMap.put(classPath, classNames);
+        }
+        return Collections.unmodifiableMap(classPathToClassNamesMap);
+    }
+
+    private static Map<String, String> initClassNameToClassPathsMap() {
+        Map<String, String> classNameToClassPathsMap = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Set<String>> entry : classPathToClassNamesMap.entrySet()) {
+            String classPath = entry.getKey();
+            Set<String> classNames = entry.getValue();
+            for (String className : classNames) {
+                classNameToClassPathsMap.put(className, classPath);
+            }
+        }
+
+        return Collections.unmodifiableMap(classNameToClassPathsMap);
+    }
+
+    private static Map<String, Set<String>> initPackageNameToClassNamesMap() {
+        Map<String, Set<String>> packageNameToClassNamesMap = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : classNameToClassPathsMap.entrySet()) {
+            String className = entry.getKey();
+            String packageName = resolvePackageName(className);
+            Set<String> classNamesInPackage = packageNameToClassNamesMap.get(packageName);
+            if (classNamesInPackage == null) {
+                classNamesInPackage = new LinkedHashSet<>();
+                packageNameToClassNamesMap.put(packageName, classNamesInPackage);
+            }
+            classNamesInPackage.add(className);
+        }
+
+        return Collections.unmodifiableMap(packageNameToClassNamesMap);
     }
 
     public static Class<?> forNameWithThreadContextClassLoader(String name)
@@ -150,53 +222,6 @@ public abstract class ClassUtils {
 
     public static ClassLoader getCallerClassLoader(Class<?> caller) {
         return caller.getClassLoader();
-    }
-
-    /**
-     * get class loader
-     *
-     * @param clazz
-     * @return class loader
-     */
-    public static ClassLoader getClassLoader(Class<?> clazz) {
-        ClassLoader cl = null;
-        try {
-            cl = Thread.currentThread().getContextClassLoader();
-        } catch (Throwable ex) {
-            // Cannot access thread context ClassLoader - falling back to system class loader...
-        }
-        if (cl == null) {
-            // No thread context class loader -> use class loader of this class.
-            cl = clazz.getClassLoader();
-            if (cl == null) {
-                // getClassLoader() returning null indicates the bootstrap ClassLoader
-                try {
-                    cl = ClassLoader.getSystemClassLoader();
-                } catch (Throwable ex) {
-                    // Cannot access system ClassLoader - oh well, maybe the caller can live with null...
-                }
-            }
-        }
-
-        return cl;
-    }
-
-    /**
-     * Return the default ClassLoader to use: typically the thread context
-     * ClassLoader, if available; the ClassLoader that loaded the ClassUtils
-     * class will be used as fallback.
-     * <p>
-     * Call this method if you intend to use the thread context ClassLoader in a
-     * scenario where you absolutely need a non-null ClassLoader reference: for
-     * example, for class path resource loading (but not necessarily for
-     * <code>Class.forName</code>, which accepts a <code>null</code> ClassLoader
-     * reference as well).
-     *
-     * @return the default ClassLoader (never <code>null</code>)
-     * @see java.lang.Thread#getContextClassLoader()
-     */
-    public static ClassLoader getClassLoader() {
-        return getClassLoader(ClassUtils.class);
     }
 
     /**
@@ -384,6 +409,50 @@ public abstract class ClassUtils {
     }
 
     /**
+     * Get all classes from the specified type with filters
+     *
+     * @param type         the specified type
+     * @param classFilters class filters
+     * @return non-null read-only {@link Set}
+     */
+    public static Set<Class<?>> getAllClasses(Class<?> type, Predicate<Class<?>>... classFilters) {
+        return getAllClasses(type, true, classFilters);
+    }
+
+    /**
+     * Get all classes(may include self type) from the specified type with filters
+     *
+     * @param type         the specified type
+     * @param includedSelf included self type or not
+     * @param classFilters class filters
+     * @return non-null read-only {@link Set}
+     */
+    public static Set<Class<?>> getAllClasses(Class<?> type, boolean includedSelf, Predicate<Class<?>>... classFilters) {
+        if (type == null || type.isPrimitive()) {
+            return emptySet();
+        }
+
+        List<Class<?>> allClasses = new LinkedList<>();
+
+        Class<?> superClass = type.getSuperclass();
+        while (superClass != null) {
+            // add current super class
+            allClasses.add(superClass);
+            superClass = superClass.getSuperclass();
+        }
+
+        // FIFO -> FILO
+        Collections.reverse(allClasses);
+
+        if (includedSelf) {
+            allClasses.add(type);
+        }
+
+        // Keep the same order from List
+        return ofSet(filterAll(allClasses, classFilters));
+    }
+
+    /**
      * Get all super classes from the specified type
      *
      * @param type         the specified type
@@ -392,17 +461,7 @@ public abstract class ClassUtils {
      * @since 1.0.0
      */
     public static Set<Class<?>> getAllSuperClasses(Class<?> type, Predicate<Class<?>>... classFilters) {
-
-        Set<Class<?>> allSuperClasses = new LinkedHashSet<>();
-
-        Class<?> superClass = type.getSuperclass();
-        while (superClass != null) {
-            // add current super class
-            allSuperClasses.add(superClass);
-            superClass = superClass.getSuperclass();
-        }
-
-        return unmodifiableSet(filterAll(allSuperClasses, classFilters));
+        return getAllClasses(type, false, classFilters);
     }
 
     /**
@@ -418,7 +477,7 @@ public abstract class ClassUtils {
             return emptySet();
         }
 
-        Set<Class<?>> allInterfaces = new LinkedHashSet<>();
+        List<Class<?>> allInterfaces = new LinkedList<>();
         Set<Class<?>> resolved = new LinkedHashSet<>();
         Queue<Class<?>> waitResolve = new LinkedList<>();
 
@@ -447,7 +506,10 @@ public abstract class ClassUtils {
             clazz = waitResolve.poll();
         }
 
-        return filterAll(allInterfaces, interfaceFilters);
+        // FIFO -> FILO
+        Collections.reverse(allInterfaces);
+
+        return ofSet(filterAll(allInterfaces, interfaceFilters));
     }
 
     /**
@@ -572,11 +634,11 @@ public abstract class ClassUtils {
      * Is generic class or not?
      *
      * @param type the target type
-     * @return if the target type is not null or <code>void</code> or Void.class, return <code>true</code>, or false
+     * @return <code>true</code> if the target type is generic class, <code>false</code> otherwise.
      * @since 1.0.0
      */
     public static boolean isGenericClass(Class<?> type) {
-        return type != null && !void.class.equals(type) && !Void.class.equals(type);
+        return type != null && type.getTypeParameters().length > 0;
     }
 
     public static <T> T unwrap(Class<T> type) {
@@ -599,21 +661,65 @@ public abstract class ClassUtils {
             return true;
         }
 
+        if (isGeneralClass(type, Boolean.FALSE)) {
+            concreteClassCache.put(type, Boolean.TRUE);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Is the specified type a abstract class or not?
+     * <p>
+     *
+     * @param type the type
+     * @return true if type is a abstract class, false otherwise.
+     */
+    public static boolean isAbstractClass(Class<?> type) {
+        return isGeneralClass(type, Boolean.TRUE);
+    }
+
+    /**
+     * Is the specified type a general class or not?
+     * <p>
+     *
+     * @param type the type
+     * @return true if type is a general class, false otherwise.
+     */
+    public static boolean isGeneralClass(Class<?> type) {
+        return isGeneralClass(type, null);
+    }
+
+    /**
+     * Is the specified type a general class or not?
+     * <p>
+     * If <code>isAbstract</code> == <code>null</code>,  it will not check <code>type</code> is abstract or not.
+     *
+     * @param type       the type
+     * @param isAbstract optional abstract flag
+     * @return true if type is a general (abstract) class, false otherwise.
+     */
+    protected static boolean isGeneralClass(Class<?> type, Boolean isAbstract) {
+
+        if (type == null) {
+            return false;
+        }
+
         int mod = type.getModifiers();
-        if (Modifier.isInterface(mod)
-                || Modifier.isAbstract(mod)
+
+        if (isInterface(mod)
                 || isAnnotation(mod)
                 || isEnum(mod)
-                || isSynthetic(mod)) {
+                || isSynthetic(mod)
+                || type.isPrimitive()
+                || type.isArray()) {
             return false;
         }
 
-        // native methods
-        if (type.isPrimitive() || type.isArray()) {
-            return false;
+        if (isAbstract != null) {
+            return isAbstract(mod) == isAbstract.booleanValue();
         }
-
-        concreteClassCache.put(type, Boolean.TRUE);
 
         return true;
     }
@@ -655,6 +761,244 @@ public abstract class ClassUtils {
      */
     public static boolean isSynthetic(int modifiers) {
         return (modifiers & SYNTHETIC) != 0;
+    }
+
+    /**
+     * Get all package names in {@link ClassPathUtils#getClassPaths() class paths}
+     *
+     * @return all package names in class paths
+     */
+    public static Set<String> getAllPackageNamesInClassPaths() {
+        return packageNameToClassNamesMap.keySet();
+    }
+
+    /**
+     * Resolve package name under specified class name
+     *
+     * @param className class name
+     * @return package name
+     */
+    public static String resolvePackageName(String className) {
+        return StringUtils.substringBeforeLast(className, ".");
+    }
+
+    /**
+     * Find all class names in class path
+     *
+     * @param classPath class path
+     * @param recursive is recursive on sub directories
+     * @return all class names in class path
+     */
+    public static Set<String> findClassNamesInClassPath(String classPath, boolean recursive) {
+        File archiveFile = new File(classPath); // JarFile or Directory
+        return findClassNamesInClassPath(archiveFile, recursive);
+    }
+
+    /**
+     * Find all class names in class path
+     *
+     * @param archiveFile JarFile or class patch directory
+     * @param recursive   is recursive on sub directories
+     * @return all class names in class path
+     */
+    public static Set<String> findClassNamesInClassPath(File archiveFile, boolean recursive) {
+        if (!archiveFile.exists()) {
+            return emptySet();
+        }
+        if (archiveFile.isDirectory()) { // Directory
+            return findClassNamesInArchiveDirectory(archiveFile, recursive);
+        } else if (archiveFile.isFile() && archiveFile.getName().endsWith(FileSuffixConstants.JAR)) { //JarFile
+            return findClassNamesInArchiveFile(archiveFile, recursive);
+        }
+        return emptySet();
+    }
+
+    /**
+     * Find class path under specified class name
+     *
+     * @param type class
+     * @return class path
+     */
+    public static String findClassPath(Class<?> type) {
+        return findClassPath(type.getName());
+    }
+
+    /**
+     * Find class path under specified class name
+     *
+     * @param className class name
+     * @return class path
+     */
+    public static String findClassPath(String className) {
+        return classNameToClassPathsMap.get(className);
+    }
+
+    /**
+     * Gets class name {@link Set} under specified class path
+     *
+     * @param classPath class path
+     * @param recursive is recursive on sub directories
+     * @return non-null {@link Set}
+     */
+
+    public static Set<String> getClassNamesInClassPath(String classPath, boolean recursive) {
+        Set<String> classNames = classPathToClassNamesMap.get(classPath);
+        if (CollectionUtils.isEmpty(classNames)) {
+            classNames = findClassNamesInClassPath(classPath, recursive);
+        }
+        return classNames;
+    }
+
+    /**
+     * Gets class name {@link Set} under specified package
+     *
+     * @param onePackage one package
+     * @return non-null {@link Set}
+     */
+
+    public static Set<String> getClassNamesInPackage(Package onePackage) {
+        return getClassNamesInPackage(onePackage.getName());
+    }
+
+    /**
+     * Gets class name {@link Set} under specified package name
+     *
+     * @param packageName package name
+     * @return non-null {@link Set}
+     */
+
+    public static Set<String> getClassNamesInPackage(String packageName) {
+        Set<String> classNames = packageNameToClassNamesMap.get(packageName);
+        return classNames == null ? Collections.<String>emptySet() : classNames;
+    }
+
+
+    protected static Set<String> findClassNamesInArchiveDirectory(File classesDirectory, boolean recursive) {
+        Set<String> classNames = new LinkedHashSet<>();
+        SimpleFileScanner simpleFileScanner = SimpleFileScanner.INSTANCE;
+        Set<File> classFiles = simpleFileScanner.scan(classesDirectory, recursive, new SuffixFileFilter(FileSuffixConstants.CLASS));
+        for (File classFile : classFiles) {
+            String className = resolveClassName(classesDirectory, classFile);
+            classNames.add(className);
+        }
+        return classNames;
+    }
+
+    protected static Set<String> findClassNamesInArchiveFile(File jarFile, boolean recursive) {
+        Set<String> classNames = new LinkedHashSet<>();
+        SimpleJarEntryScanner simpleJarEntryScanner = SimpleJarEntryScanner.INSTANCE;
+        try {
+            JarFile jarFile_ = new JarFile(jarFile);
+            Set<JarEntry> jarEntries = simpleJarEntryScanner.scan(jarFile_, recursive, ClassFileJarEntryFilter.INSTANCE);
+            for (JarEntry jarEntry : jarEntries) {
+                String jarEntryName = jarEntry.getName();
+                String className = resolveClassName(jarEntryName);
+                if (StringUtils.isNotBlank(className)) {
+                    classNames.add(className);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return classNames;
+    }
+
+
+    protected static String resolveClassName(File classesDirectory, File classFile) {
+        String classFileRelativePath = FileUtils.resolveRelativePath(classesDirectory, classFile);
+        return resolveClassName(classFileRelativePath);
+    }
+
+    /**
+     * Resolve resource name to class name
+     *
+     * @param resourceName resource name
+     * @return class name
+     */
+    public static String resolveClassName(String resourceName) {
+        String className = StringUtils.replace(resourceName, PathConstants.SLASH, Constants.DOT);
+        className = StringUtils.substringBefore(className, FileSuffixConstants.CLASS);
+        while (StringUtils.startsWith(className, Constants.DOT)) {
+            className = StringUtils.substringAfter(className, Constants.DOT);
+        }
+        return className;
+    }
+
+    /**
+     * The map of all class names in {@link ClassPathUtils#getClassPaths() class path} , the class path for one {@link
+     * JarFile} or classes directory as key , the class names set as value
+     *
+     * @return Read-only
+     */
+    public static Map<String, Set<String>> getClassPathToClassNamesMap() {
+        return classPathToClassNamesMap;
+    }
+
+    /**
+     * The set of all class names in {@link ClassPathUtils#getClassPaths() class path}
+     *
+     * @return Read-only
+     */
+
+    public static Set<String> getAllClassNamesInClassPaths() {
+        Set<String> allClassNames = new LinkedHashSet<>();
+        for (Set<String> classNames : classPathToClassNamesMap.values()) {
+            allClassNames.addAll(classNames);
+        }
+        return Collections.unmodifiableSet(allClassNames);
+    }
+
+
+    /**
+     * Get {@link Class}'s code source location URL
+     *
+     * @param type
+     * @return If , return <code>null</code>.
+     * @throws NullPointerException If <code>type</code> is <code>null</code> , {@link NullPointerException} will be thrown.
+     */
+    public static URL getCodeSourceLocation(Class<?> type) throws NullPointerException {
+
+        URL codeSourceLocation = null;
+        ClassLoader classLoader = type.getClassLoader();
+
+        if (classLoader == null) { // Bootstrap ClassLoader or type is primitive or void
+            String path = findClassPath(type);
+            if (StringUtils.isNotBlank(path)) {
+                try {
+                    codeSourceLocation = new File(path).toURI().toURL();
+                } catch (MalformedURLException ignored) {
+                    codeSourceLocation = null;
+                }
+            }
+        } else {
+            ProtectionDomain protectionDomain = type.getProtectionDomain();
+            CodeSource codeSource = protectionDomain == null ? null : protectionDomain.getCodeSource();
+            codeSourceLocation = codeSource == null ? null : codeSource.getLocation();
+        }
+        return codeSourceLocation;
+    }
+
+    /**
+     * Resolve the types of the specified values
+     *
+     * @param values the values
+     * @return If can't be resolved, return {@link #EMPTY_CLASS_ARRAY empty class array}
+     */
+    public static Class[] resolveTypes(Object... values) {
+
+        if (isEmpty(values)) {
+            return EMPTY_CLASS_ARRAY;
+        }
+
+        int size = values.length;
+
+        Class[] types = new Class[size];
+
+        for (int i = 0; i < size; i++) {
+            Object value = values[i];
+            types[i] = value == null ? null : value.getClass();
+        }
+
+        return types;
     }
 
 }

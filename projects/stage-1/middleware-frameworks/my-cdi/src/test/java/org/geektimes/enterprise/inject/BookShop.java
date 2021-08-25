@@ -16,9 +16,33 @@
  */
 package org.geektimes.enterprise.inject;
 
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
+import javax.enterprise.context.Dependent;
+import javax.enterprise.inject.spi.BeanManager;
+import javax.inject.Inject;
+
 /**
  * @author <a href="mailto:mercyblitz@gmail.com">Mercy</a>
  * @since
  */
+@Dependent
 public class BookShop extends Business implements Shop<Book> {
+
+    @Inject
+    private BeanManager beanManager;
+
+
+    @PostConstruct
+    public void init() {
+
+    }
+
+    @PreDestroy
+    public void destroy() {
+    }
+
+    @Inject
+    public void init(Shop<Book> bookShop) {
+    }
 }

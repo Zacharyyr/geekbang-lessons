@@ -16,14 +16,18 @@
  */
 package org.geektimes.enterprise.inject.standard;
 
+import org.geektimes.commons.reflect.util.ReflectionUtils;
+
 import javax.enterprise.inject.spi.Annotated;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Type;
+import java.util.Objects;
 import java.util.Set;
+import java.util.StringJoiner;
 
+import static org.geektimes.commons.collection.util.CollectionUtils.ofSet;
 import static org.geektimes.commons.reflect.util.TypeUtils.asClass;
-import static org.geektimes.commons.util.CollectionUtils.ofSet;
 import static org.geektimes.enterprise.inject.util.Beans.getBeanTypes;
 
 /**
@@ -58,7 +62,7 @@ public abstract class ReflectiveAnnotated<A extends AnnotatedElement> implements
     }
 
     @Override
-    public final Set<Annotation> getAnnotations() {
+    public Set<Annotation> getAnnotations() {
         return ofSet(annotatedElement.getAnnotations());
     }
 
@@ -69,5 +73,28 @@ public abstract class ReflectiveAnnotated<A extends AnnotatedElement> implements
 
     public final A getAnnotatedElement() {
         return annotatedElement;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ReflectiveAnnotated<?> that = (ReflectiveAnnotated<?>) o;
+        return Objects.equals(annotatedElement, that.annotatedElement);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(annotatedElement);
+    }
+
+    @Override
+    public String toString() {
+        return new StringJoiner(", ", ReflectiveAnnotated.class.getSimpleName() + "[", "]")
+                .add("annotatedElement=" + getAnnotatedElement())
+                .add("baseType=" + getBaseType())
+                .add("types=" + getTypeClosure())
+                .add("annotations=" + getAnnotations())
+                .toString();
     }
 }

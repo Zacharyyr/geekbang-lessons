@@ -16,16 +16,14 @@
  */
 package org.geektimes.enterprise.inject.util;
 
-import org.geektimes.commons.util.BaseUtils;
+import org.geektimes.commons.lang.util.AnnotationUtils;
 
 import javax.enterprise.context.NormalScope;
-import javax.inject.Qualifier;
 import javax.inject.Scope;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 
-import static org.geektimes.commons.util.AnnotationUtils.findAnnotation;
-import static org.geektimes.commons.util.AnnotationUtils.isMetaAnnotation;
+import static org.geektimes.commons.lang.util.AnnotationUtils.findAnnotation;
 
 /**
  * The utilities class for {@link Scope}
@@ -47,10 +45,23 @@ public abstract class Scopes {
     }
 
     public static boolean isScope(Annotation annotation) {
-        return isScope(annotation.annotationType());
+        return annotation != null && isScope(annotation.annotationType());
     }
 
     public static boolean isScope(Class<? extends Annotation> annotationType) {
-        return annotationType.isAnnotation() && isMetaAnnotation(annotationType, Scope.class);
+        return AnnotationUtils.isAnnotationPresent(annotationType, Scope.class);
+    }
+
+    public static boolean isNormalScope(Annotation annotation) {
+        return annotation != null && isNormalScope(annotation.annotationType());
+    }
+
+    public static boolean isNormalScope(Class<? extends Annotation> annotationType) {
+        return AnnotationUtils.isAnnotationPresent(annotationType, NormalScope.class);
+    }
+
+    public static boolean isPassivatingScope(Class<? extends Annotation> annotationType) {
+        NormalScope normalScope = annotationType.getAnnotation(NormalScope.class);
+        return normalScope.passivating();
     }
 }

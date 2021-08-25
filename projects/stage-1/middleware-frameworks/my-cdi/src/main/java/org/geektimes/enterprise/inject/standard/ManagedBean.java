@@ -17,15 +17,19 @@
 package org.geektimes.enterprise.inject.standard;
 
 import org.geektimes.enterprise.inject.util.Beans;
+import org.geektimes.enterprise.inject.util.Injections;
 
 import javax.enterprise.context.spi.CreationalContext;
+import javax.enterprise.inject.CreationException;
 import javax.enterprise.inject.spi.*;
-import javax.inject.Inject;
-import java.util.*;
+import java.lang.reflect.Constructor;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import static java.util.Objects.requireNonNull;
-import static org.geektimes.commons.reflect.util.ClassUtils.unwrap;
-import static org.geektimes.commons.util.CollectionUtils.newFixedSet;
+import static java.util.Collections.*;
+import static org.geektimes.commons.collection.util.CollectionUtils.newLinkedHashSet;
 import static org.geektimes.enterprise.inject.util.Beans.validateManagedBeanSpecializes;
 import static org.geektimes.enterprise.inject.util.Beans.validateManagedBeanType;
 
@@ -38,8 +42,20 @@ import static org.geektimes.enterprise.inject.util.Beans.validateManagedBeanType
  */
 public class ManagedBean<T> extends AbstractBean<Class, T> {
 
-    public ManagedBean(Class<?> beanClass) {
+    private final BeanManager beanManager;
+
+    private final AnnotatedType annotatedType;
+
+    private Map<AnnotatedConstructor, List<ConstructorParameterInjectionPoint>> constructorParameterInjectionPointsMap;
+
+    private Set<FieldInjectionPoint> fieldInjectionPoints;
+
+    private Map<AnnotatedMethod, List<MethodParameterInjectionPoint>> methodParameterInjectionPointsMap;
+
+    public ManagedBean(BeanManager beanManager, Class<?> beanClass) {
         super(beanClass, beanClass);
+        this.beanManager = beanManager;
+        this.annotatedType = new ReflectiveAnnotatedType(beanClass);
     }
 
     @Override
@@ -55,30 +71,99 @@ public class ManagedBean<T> extends AbstractBean<Class, T> {
 
     @Override
     public T create(CreationalContext<T> creationalContext) {
-        T instance = (T) unwrap(getBeanClass());
-        creationalContext.push(instance);
+        T instance = null;
+
+        Map<AnnotatedConstructor, List<ConstructorParameterInjectionPoint>> injectionPointsMap =
+                getConstructorParameterInjectionPointsMap();
+
+        try {
+            if (injectionPointsMap.isEmpty()) { // non-argument constructor
+                instance = (T) getBeanClass().newInstance();
+            } else { // @Inject constructor
+                // just only one Constructor annotated @Inject
+                Map.Entry<AnnotatedConstructor, List<ConstructorParameterInjectionPoint>> entry =
+                        injectionPointsMap.entrySet().iterator().next();
+                List<ConstructorParameterInjectionPoint> injectionPoints = entry.getValue();
+                Object[] arguments = new Object[injectionPoints.size()];
+                AnnotatedConstructor annotatedConstructor = entry.getKey();
+                Constructor constructor = annotatedConstructor.getJavaMember();
+                int i = 0;
+                for (ConstructorParameterInjectionPoint injectionPoint : injectionPoints) {
+                    if (constructor == null) {
+                        constructor = injectionPoint.getMember();
+                    }
+                    arguments[i++] = beanManager.getInjectableReference(injectionPoint, creationalContext);
+                }
+                instance = (T) constructor.newInstance(arguments);
+            }
+            creationalContext.push(instance);
+        } catch (Throwable e) {
+            throw new CreationException(e);
+        }
         return instance;
     }
 
     @Override
     public void destroy(T instance, CreationalContext<T> creationalContext) {
         // TODO
+        creationalContext.release();
+    }
+
+    public AnnotatedType getAnnotatedType() {
+        return annotatedType;
+    }
+
+    public Map<AnnotatedConstructor, List<ConstructorParameterInjectionPoint>> getConstructorParameterInjectionPointsMap() {
+        if (constructorParameterInjectionPointsMap == null) {
+            constructorParameterInjectionPointsMap = Injections.getConstructorParameterInjectionPointsMap(getAnnotatedType(), this);
+        }
+        return constructorParameterInjectionPointsMap;
+    }
+
+    public List<ConstructorParameterInjectionPoint> getConstructorParameterInjectionPoints() {
+        Map<AnnotatedConstructor, List<ConstructorParameterInjectionPoint>> injectionPointsMap =
+                getConstructorParameterInjectionPointsMap();
+        if (injectionPointsMap.isEmpty()) {
+            return emptyList();
+        }
+        List<ConstructorParameterInjectionPoint> injectionPoints = new LinkedList<>();
+        injectionPointsMap.values().forEach(injectionPoints::addAll);
+        return unmodifiableList(injectionPoints);
+    }
+
+    public Set<FieldInjectionPoint> getFieldInjectionPoints() {
+        if (fieldInjectionPoints == null) {
+            fieldInjectionPoints = Injections.getFieldInjectionPoints(getAnnotatedType(), this);
+        }
+        return fieldInjectionPoints;
+    }
+
+    public Map<AnnotatedMethod, List<MethodParameterInjectionPoint>> getMethodParameterInjectionPointsMap() {
+        if (methodParameterInjectionPointsMap == null) {
+            methodParameterInjectionPointsMap = Injections.getMethodParameterInjectionPoints(getAnnotatedType(), this);
+        }
+        return methodParameterInjectionPointsMap;
+    }
+
+    public List<MethodParameterInjectionPoint> getMethodParameterInjectionPoints() {
+        List<MethodParameterInjectionPoint> injectionPoints = new LinkedList<>();
+        getMethodParameterInjectionPointsMap().values().forEach(injectionPoints::addAll);
+        return unmodifiableList(injectionPoints);
     }
 
     @Override
     public Set<InjectionPoint> getInjectionPoints() {
-        AnnotatedType annotatedType = new ReflectiveAnnotatedType(getBeanClass());
 
-        Set<InjectionPoint> constructorParameterInjectionPoints = getConstructorParameterInjectionPoints(annotatedType);
+        List<ConstructorParameterInjectionPoint> constructorParameterInjectionPoints = getConstructorParameterInjectionPoints();
 
-        Set<InjectionPoint> fieldInjectionPoints = getFieldInjectionPoints(annotatedType);
+        Set<FieldInjectionPoint> fieldInjectionPoints = getFieldInjectionPoints();
 
-        Set<InjectionPoint> methodParameterInjectionPoints = getMethodParameterInjectionPoints(annotatedType);
+        List<MethodParameterInjectionPoint> methodParameterInjectionPoints = getMethodParameterInjectionPoints();
 
         int size = constructorParameterInjectionPoints.size() + fieldInjectionPoints.size()
                 + methodParameterInjectionPoints.size();
 
-        Set<InjectionPoint> injectionPoints = newFixedSet(size);
+        Set<InjectionPoint> injectionPoints = newLinkedHashSet(size);
         // add the InjectionPoints from Constructors' parameters
         injectionPoints.addAll(constructorParameterInjectionPoints);
         // add the InjectionPoints from Fields
@@ -86,58 +171,10 @@ public class ManagedBean<T> extends AbstractBean<Class, T> {
         // add the InjectionPoints from Methods' parameters
         injectionPoints.addAll(methodParameterInjectionPoints);
 
-        return Collections.unmodifiableSet(injectionPoints);
+        return unmodifiableSet(injectionPoints);
     }
 
-    private Set<InjectionPoint> getConstructorParameterInjectionPoints(AnnotatedType annotatedType) {
-        Set<AnnotatedConstructor> annotatedConstructors = annotatedType.getConstructors();
-
-        Set<InjectionPoint> injectionPoints = new LinkedHashSet<>();
-
-        for (AnnotatedConstructor annotatedConstructor : annotatedConstructors) {
-            if (annotatedConstructor.isAnnotationPresent(Inject.class)) {
-                List<AnnotatedParameter> annotatedParameters = annotatedConstructor.getParameters();
-                for (AnnotatedParameter annotatedParameter : annotatedParameters) {
-                    InjectionPoint injectionPoint = new ConstructorParameterInjectionPoint(annotatedParameter, annotatedConstructor, this);
-                    injectionPoints.add(injectionPoint);
-                }
-                break;
-            }
-        }
-
-        return injectionPoints;
-    }
-
-    private Set<InjectionPoint> getFieldInjectionPoints(AnnotatedType annotatedType) {
-        Set<AnnotatedField> annotatedFields = annotatedType.getFields();
-
-        Set<InjectionPoint> injectionPoints = new LinkedHashSet<>();
-
-        for (AnnotatedField annotatedField : annotatedFields) {
-            if (annotatedField.isAnnotationPresent(Inject.class)) {
-                InjectionPoint injectionPoint = new FieldInjectionPoint(annotatedField, this);
-                injectionPoints.add(injectionPoint);
-            }
-        }
-
-        return injectionPoints;
-    }
-
-    private Set<InjectionPoint> getMethodParameterInjectionPoints(AnnotatedType annotatedType) {
-        Set<AnnotatedMethod> annotatedMethods = annotatedType.getMethods();
-
-        Set<InjectionPoint> injectionPoints = new LinkedHashSet<>();
-
-        for (AnnotatedMethod annotatedMethod : annotatedMethods) {
-            if (annotatedMethod.isAnnotationPresent(Inject.class)) {
-                List<AnnotatedParameter> annotatedParameters = annotatedMethod.getParameters();
-                for (AnnotatedParameter annotatedParameter : annotatedParameters) {
-                    InjectionPoint injectionPoint = new MethodParameterInjectionPoint(annotatedParameter, annotatedMethod, this);
-                    injectionPoints.add(injectionPoint);
-                }
-            }
-        }
-
-        return injectionPoints;
+    public BeanManager getBeanManager() {
+        return beanManager;
     }
 }
